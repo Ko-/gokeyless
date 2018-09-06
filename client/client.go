@@ -51,8 +51,16 @@ func NewClient(cert tls.Certificate, keyserverCA *x509.CertPool) *Client {
 			RootCAs:      keyserverCA,
 			Certificates: []tls.Certificate{cert},
 			CipherSuites: []uint16{
+				tls.TLS_AES_256_GCM_SHA384,
 				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			},
+			CurvePreferences: []tls.CurveID{
+				tls.SidhP751Curve448,
+				tls.X25519,
+				tls.CurveP256,
+				tls.CurveP384,
+				tls.CurveP521,
 			},
 		},
 		Dialer:      &net.Dialer{},

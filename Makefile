@@ -14,10 +14,18 @@ SYSTEMD_PREFIX               := $(DESTDIR)/lib/systemd/system
 CONFIG_PATH                  := etc/keyless
 CONFIG_PREFIX                := $(DESTDIR)/$(CONFIG_PATH)
 
+GO ?= go
 OS ?= linux
 ARCH ?= amd64
 DEB_PACKAGE := $(NAME)_$(VERSION)_$(ARCH).deb
 RPM_PACKAGE := $(NAME)-$(VERSION).$(ARCH).rpm
+
+TRIS_REV    := "2fd37b550fe5873c1eb39c3aa3564379bce6e751"
+TRIS_URL    := "https://github.com/cloudflare/tls-tris/archive/$(TRIS_REV).zip"
+TRIS_DIR    := vendor/github.com/cloudflare/tls-tris
+TRIS_GOROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))/$(TRIS_DIR)/_dev/GOROOT/$(OS)_$(ARCH)
+TRIS        := $(TRIS_GOROOT)/.ok_$(shell go version  | cut -d' ' -f3)_$(OS)_$(ARCH)
+GO_TRIS     := GOROOT=$(TRIS_GOROOT) $(GO)
 
 .PHONY: all
 all: $(DEB_PACKAGE) $(RPM_PACKAGE)
@@ -34,12 +42,23 @@ install-config:
 	@install -m755 pkg/gokeyless.service $(SYSTEMD_PREFIX)/gokeyless.service
 	@install -m600 pkg/gokeyless.yaml $(CONFIG_PREFIX)/gokeyless.yaml
 
-$(INSTALL_BIN)/$(NAME): | install-config
-	@GOOS=$(OS) GOARCH=$(ARCH) go build -ldflags $(LDFLAGS) -o $@ ./cmd/$(NAME)/...
+$(TRIS):
+	@mkdir -p $(TRIS_DIR)
+	@wget -nc -P $(TRIS_DIR) -q $(TRIS_URL)
+	@unzip -d $(TRIS_DIR) -q $(TRIS_DIR)/$(TRIS_REV).zip
+	@mv $(TRIS_DIR)/tls-tris-$(TRIS_REV)/* $(TRIS_DIR)
+	@mv $(TRIS_DIR)/tls-tris-$(TRIS_REV)/.[!.]* $(TRIS_DIR)
+	@rmdir $(TRIS_DIR)/tls-tris-$(TRIS_REV)
+	@rm $(TRIS_DIR)/$(TRIS_REV).zip
+	@make -C $(TRIS_DIR) -f _dev/Makefile $@
+
+$(INSTALL_BIN)/$(NAME): $(TRIS) | install-config
+	@GOOS=$(OS) GOARCH=$(ARCH) $(GO_TRIS) build -ldflags $(LDFLAGS) -o $@ ./cmd/$(NAME)/...
 
 .PHONY: clean
 clean:
 	@$(RM) -r $(DESTDIR)
+	@$(RM) -r $(TRIS_DIR)
 	@$(RM) $(DEB_PACKAGE)
 	@$(RM) $(RPM_PACKAGE)
 
@@ -80,26 +99,26 @@ $(RPM_PACKAGE): | $(INSTALL_BIN)/$(NAME) install-config
 
 .PHONY: dev
 dev: gokeyless
-gokeyless: $(shell find . -type f -name '*.go')
-	go build -ldflags "-X main.version=dev" -o $@ ./cmd/gokeyless/...
+gokeyless: $(shell find . -path $(TRIS_DIR) -prune -o -type f -name '*.go') $(TRIS)
+	$(GO_TRIS) build -ldflags "-X main.version=dev" -o $@ ./cmd/gokeyless/...
 
 .PHONY: vet
 vet:
-	go vet `go list ./... | grep -v /vendor/`
+	$(GO) vet `$(GO) list ./... | grep -v /vendor/`
 
 .PHONY: lint
 lint:
-	for i in `go list ./... | grep -v /vendor/`; do golint $$i; done
+	for i in `$(GO) list ./... | grep -v /vendor/`; do golint $$i; done
 
 .PHONY: test
-test:
-	GODEBUG=cgocheck=2 go test -v -cover -race `go list ./... | grep -v /vendor/`
-	GODEBUG=cgocheck=2 go test -v -cover -race ./tests -args -softhsm2
+test: $(TRIS)
+	GODEBUG=cgocheck=2 $(GO_TRIS) test -v -cover -race `$(GO) list ./... | grep -v /vendor/`
+	GODEBUG=cgocheck=2 $(GO_TRIS) test -v -cover -race ./tests -args -softhsm2
 
 .PHONY: test-nohsm
-test-nohsm:
-	GODEBUG=cgocheck=2 go test -v -cover -race `go list ./... | grep -v /vendor/`
+test-nohsm: $(TRIS)
+	GODEBUG=cgocheck=2 $(GO_TRIS) test -v -cover -race `$(GO) list ./... | grep -v /vendor/`
 
 .PHONY: benchmark-softhsm
-benchmark-softhsm:
-	go test -v -race ./server -bench HSM -args -softhsm2
+benchmark-softhsm: $(TRIS)
+	$(GO_TRIS) test -v -race ./server -bench HSM -args -softhsm2
